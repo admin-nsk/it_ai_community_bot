@@ -25,4 +25,4 @@ jobs:
             git pull origin release
             source .venv/bin/activate
             pip install -r requirements.txt
-            sudo systemctl restart it-ai-community-bot.service
+            sudo /bin/systemctl restart it-ai-community-bot.service
