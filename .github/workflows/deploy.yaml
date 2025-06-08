@@ -21,8 +21,8 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /home/wiseman/telegram-bot
+            cd /home/wiseman/it_ai_community_bot
             git pull origin release
-            source venv/bin/activate
+            source .venv/bin/activate
             pip install -r requirements.txt
-            systemctl restart telegram-bot.service
+            systemctl restart it-ai-community-bot.service
