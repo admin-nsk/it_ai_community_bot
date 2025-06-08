@@ -21,8 +21,15 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            echo "Pulling latest changes..."
             cd /home/wiseman/it_ai_community_bot
             git pull origin release
+            echo "Activating virtual environment..."
             source .venv/bin/activate
+            
+            echo "Installing dependencies..."
+            pip install --upgrade pip
             pip install -r requirements.txt
+
+            echo "Restarting service..."
             sudo /bin/systemctl restart it-ai-community-bot.service
