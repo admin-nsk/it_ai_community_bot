@@ -47,7 +47,6 @@ async def rating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['rating'] = user_rating
     await update.message.reply_text(
         'Спасибо! Теперь, пожалуйста, напишите ваш комментарий о встрече '
-        '(или отправьте /skip, если не хотите оставлять комментарий).'
     )
     return COMMENT
 
