@@ -27,7 +27,7 @@ rating_keyboard = [['1', '2', '3', '4', '5']]
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начало диалога и запрос оценки встречи."""
     await update.message.reply_text(
-        'Привет! Пожалуйста, оцените прошедшую встречу по шкале от 1 до 5, '
+        'Привет! Пожалуйста, оцените вводную встречу по шкале от 1 до 5, '
         'где 1 - совсем не понравилось, 5 - очень понравилось.',
         reply_markup=ReplyKeyboardMarkup(rating_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )

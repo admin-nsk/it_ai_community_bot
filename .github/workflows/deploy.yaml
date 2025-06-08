@@ -32,4 +32,4 @@ jobs:
             pip install -r requirements.txt
 
             echo "Restarting service..."
-            sudo /bin/systemctl restart it-ai-community-bot.service
+#            sudo /bin/systemctl restart it-ai-community-bot.service
