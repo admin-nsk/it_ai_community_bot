@@ -13,12 +13,16 @@ fields = [
 bot_States = namedtuple('bot_States', fields)
 STATES = bot_States(*range(len(fields)))
 
-SURVEY_KEYS = namedtuple(
-    'survey_keys',
-    [
+
+_survey_fields = [
         'meeting_format',
         'meeting_topics',
         'meeting_frequency',
         'meeting_help',
     ]
+
+survey_keys = namedtuple(
+    'survey_keys',
+    _survey_fields
 )
+SURVEY_KEYS = survey_keys(*_survey_fields)

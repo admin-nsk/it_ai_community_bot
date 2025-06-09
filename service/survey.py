@@ -14,7 +14,7 @@ logger = logging.getLogger("it-ai-community-bot")
 async def meeting_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начало диалога и запрос оценки встречи."""
     await update.effective_message.reply_text(
-        'Какие форматы встреч и виды активности Вам интересны\n'
+        'Какие форматы встреч и виды активности Вам интересны\n\n'
         '▪️Онлайн-встречи / офлайн-митапы / гостевые визиты\n'
         '▪️Экскурсии\n'
         '▪️Мастермайнды\n'
@@ -29,7 +29,7 @@ async def meeting_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def meeting_topics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data[SURVEY_KEYS.meeting_format] = update.message.text
     await update.message.reply_text(
-        'Какие темы Вам были бы интересны\n'
+        'Какие темы Вам были бы интересны\n\n'
         '▪️Как собрать сильную dev-команду\n'
         '▪️Автоматизация бизнес-процессов\n'
         '▪️Построение архитектуры веб-сервисов\n'
@@ -55,7 +55,7 @@ async def meeting_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def meeting_helps(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data[SURVEY_KEYS.meeting_frequency] = update.message.text
     await update.message.reply_text(
-        'Готовы ли оказать какую-либо помощь в развитии направления\n'
+        'Готовы ли оказать какую-либо помощь в развитии направления\n\n'
         '▪️Помощь с организацией встреч\n'
         '▪️Выступать спикером\n'
         '▪️Кого-то привлечь извне (спикеров, экспертов, менторов)\n'
