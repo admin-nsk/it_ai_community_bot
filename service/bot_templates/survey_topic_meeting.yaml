@@ -1,0 +1,55 @@
+steps:
+  - name: "start"
+    message: "Добро пожаловать! Введите ваше имя:"
+    save_to_context: "user_name"   # Сохраняет введённое сообщение в контекст под этим ключом
+    next_state: "ask_email"
+    keyboard: null
+
+  - name: "ask_email"
+    message: "Введите ваш email:"
+    save_to_context: "user_name"
+    next_state: "choose_option"
+    keyboard: null
+
+  - name: "choose_option"
+    message: "Выберите вариант:"
+    save_to_context: "user_email"
+    keyboard:
+      type: "inline"
+      buttons:
+        - text: "Вариант 1"
+          action: "option_1"
+          button_type: "callback"
+          next_state: "option_1_result"
+        - text: "Вариант 2"
+          action: "option_2"
+          button_type: "callback"
+          next_state: "option_2_result"
+
+  - name: "option_1_result"
+    save_to_context: "chosen_option"
+    message: "Вы выбрали вариант 1! Спасибо."
+    next_state: "end"
+    keyboard: null
+
+  - name: "option_2_result"
+    save_to_context: "chosen_option"
+    message: "Вы выбрали вариант 2! Спасибо."
+    next_state: "end"
+    keyboard: null
+
+  - name: "end"
+    message: "Опрос завершён."
+    keyboard: null
+
+  - name: "help"
+    message: "Здесь будет справочная информация."
+    keyboard:
+      type: "reply"
+      buttons:
+        - text: "Назад"
+          action: "start"
+          button_type: "text"
+  - name: "input_name"
+    message: "Пожалуйста, введите ваше имя:"
+    next_state: "input_email"
