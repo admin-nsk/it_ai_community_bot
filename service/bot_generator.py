@@ -1,26 +1,31 @@
 import logging
 import csv
 import os
+import pathlib
 from collections import defaultdict
 
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from service.parser import BotTemplateParser
 from typing import Dict, Any
+import yadisk
 
 logger = logging.getLogger("it-ai-community-bot")
 
 class BotLogicGenerator:
-    def __init__(self, template_path: str, csv_path: str = 'user_results.csv'):
+    def __init__(self, template_path: str):
         self.parser = BotTemplateParser(template_path)
         self.steps = self.parser.get_steps()
         self.state_map = {step['name']: idx for idx, step in enumerate(self.steps)}
-        self.csv_path = csv_path
-        # Формируем fieldnames один раз
+        self.csv_path = None
         self.fieldnames = [step.get('save_to_context') for step in self.steps if 'save_to_context' in step]
-        self.fieldnames = list(dict.fromkeys(self.fieldnames))  # Уникальные, порядок сохранён
+        self.fieldnames = list(dict.fromkeys(self.fieldnames))
         if 'user_id' not in self.fieldnames:
             self.fieldnames.insert(0, 'user_id')
+        self._set_csv_path()
+
+    def _set_csv_path(self):
+        self.csv_path = f'{self.parser.get_name()}.csv'
 
     def _build_keyboard(self, keyboard_cfg):
         if not keyboard_cfg:
@@ -44,7 +49,15 @@ class BotLogicGenerator:
             row = {k: user_data.get(k, '') for k in self.fieldnames}
             writer.writerow(row)
 
-    def _make_handler(self, step: Dict[str, Any], is_callback=False):
+            # Загружаем на Яндекс.Диск
+        try:
+            y = yadisk.Client(token=os.getenv('YANDEX_DISK_TOKEN'))
+            filename = pathlib.Path(self.csv_path).name
+            y.upload(self.csv_path, f'/bot_feedbacks/{filename}', overwrite=True)
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке на Яндекс.Диск: {e}")
+
+    def _make_handler(self, step: Dict[str, Any], state_idx: int, is_callback=False):
         async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             user_id = update.effective_user.id if update.effective_user else None
             if is_callback and update.callback_query:
@@ -81,6 +94,8 @@ class BotLogicGenerator:
                 keyboard = self._build_keyboard(step.get('keyboard'))
                 await update.message.reply_text(step['message'], reply_markup=keyboard)
                 next_state = step.get('next_state')
+                if not next_state and step.get('keyboard', {}).get('type') == 'inline':
+                    return state_idx
                 if next_state and next_state in self.state_map:
                     return self.state_map[next_state]
                 self._save_user_data(context.user_data)
@@ -96,10 +111,12 @@ class BotLogicGenerator:
             callback_data = update.callback_query.data
             for btn in step.get('keyboard', {}).get('buttons', []):
                 if btn.get('action') == callback_data:
-                    if 'save_to_context' in step:
-                        context.user_data[step['save_to_context']] = callback_data
-                    context.user_data['user_id'] = user_id
                     next_state = btn.get('next_state')
+                    next_idx = self.state_map[next_state]
+                    next_step = self.steps[next_idx]
+                    if 'save_to_context' in step:
+                        context.user_data[next_step['save_to_context']] = callback_data
+                    context.user_data['user_id'] = user_id
                     break
 
             # Если не найдено, fallback к next_state шага
@@ -113,19 +130,20 @@ class BotLogicGenerator:
                     next_step['message'],
                     reply_markup=self._build_keyboard(next_step.get('keyboard'))
                 )
+                self._save_user_data(context.user_data)
                 return next_idx
             return ConversationHandler.END
         return handler
 
 
     def generate_conversation_handler(self):
-        entry_points = [CommandHandler('start', self._make_handler(self.steps[0]))]
+        entry_points = [CommandHandler('start', self._make_handler(self.steps[0], 0))]
         states = defaultdict(list)
         for idx, step in enumerate(self.steps):
-            states[idx].append(MessageHandler(filters.TEXT & ~filters.COMMAND, self._make_handler(step)))
+            states[idx].append(MessageHandler(filters.TEXT & ~filters.COMMAND, self._make_handler(step, idx)))
             if step.get('keyboard', {}) and step.get('keyboard', {}).get('type') == 'inline':
+                # states[idx].append(CallbackQueryHandler(self._make_handler(step, idx, is_callback=True)))
                 states[idx].append(CallbackQueryHandler(self._make_inline_button_handler(step, is_callback=True)))
-                states[idx+1].append(CallbackQueryHandler(self._make_inline_button_handler(step, is_callback=True)))
 
         return ConversationHandler(
             entry_points=entry_points,

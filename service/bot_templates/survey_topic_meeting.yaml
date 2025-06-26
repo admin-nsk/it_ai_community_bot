@@ -1,3 +1,4 @@
+name: "survey_topic_meeting"
 steps:
   - name: "start"
     message: "Добро пожаловать! Введите ваше имя:"

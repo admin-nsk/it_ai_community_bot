@@ -26,3 +26,6 @@ class BotTemplateParser:
             if step['name'] == name:
                 return step
         raise KeyError(f"Step with name '{name}' not found")
+
+    def get_name(self) -> str:
+        return self.data.get('name', "unknown")
