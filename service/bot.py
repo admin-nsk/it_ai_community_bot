@@ -1,14 +1,16 @@
 import os
 import logging
-from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+# from dotenv import load_dotenv
+from aiogram import Bot, Dispatcher, Router
+from aiogram.filters import Command
+from aiogram.types import Message
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 
 from service.bot_generator import BotLogicGenerator
-from service.intro_meeting_report import get_conversation_handler
 
 # Загрузка переменных окружения
-load_dotenv()
+# load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
@@ -17,14 +19,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("it-ai-community-bot")
 
+# Создаем роутер для обработчиков
+router = Router()
+
 def run_bot():
     """Запуск бота."""
-    # Создаем приложение
-    application = Application.builder().token(os.getenv('TELEGRAM_TOKEN')).build()
-
-    # application.add_handler(get_conversation_handler())
+    # Создаем бота и диспетчер
+    bot = Bot(
+        token=os.getenv('TELEGRAM_TOKEN'), 
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+    dp = Dispatcher()
+    
+    # Регистрируем роутер
+    dp.include_router(router)
+    
+    # Создаем генератор логики бота
     handler = BotLogicGenerator('/home/petrov.aleksey140/Projects/it_ai_community_bot/service/bot_templates/survey_topic_meeting.yaml')
-    application.add_handler(handler.generate_conversation_handler())
-
+    handler.register_handlers(router)
+    
     # Запускаем бота
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    dp.run_polling(bot)

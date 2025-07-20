@@ -3,11 +3,14 @@ import csv
 import os
 import pathlib
 from collections import defaultdict
-
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from service.parser import BotTemplateParser
 from typing import Dict, Any
+
+from aiogram import Router, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton
+from service.parser import BotTemplateParser
 import yadisk
 
 logger = logging.getLogger("it-ai-community-bot")
@@ -23,21 +26,32 @@ class BotLogicGenerator:
         if 'user_id' not in self.fieldnames:
             self.fieldnames.insert(0, 'user_id')
         self._set_csv_path()
+        
+        # Создаем состояния FSM
+        self.states_group = self._create_states_group()
 
     def _set_csv_path(self):
         self.csv_path = f'{self.parser.get_name()}.csv'
+
+    def _create_states_group(self):
+        """Создает класс состояний для FSM"""
+        states_dict = {}
+        for idx, step in enumerate(self.steps):
+            states_dict[f'step_{idx}'] = State()
+        
+        return type('BotStates', (StatesGroup,), states_dict)
 
     def _build_keyboard(self, keyboard_cfg):
         if not keyboard_cfg:
             return None
         if keyboard_cfg['type'] == 'inline':
             buttons = [
-                [InlineKeyboardButton(btn['text'], callback_data=btn['action'])] for btn in keyboard_cfg['buttons']
+                [InlineKeyboardButton(text=btn['text'], callback_data=btn['action'])] for btn in keyboard_cfg['buttons']
             ]
-            return InlineKeyboardMarkup(buttons)
+            return InlineKeyboardMarkup(inline_keyboard=buttons)
         elif keyboard_cfg['type'] == 'reply':
-            buttons = [[btn['text']] for btn in keyboard_cfg['buttons']]
-            return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+            buttons = [[KeyboardButton(text=btn['text'])] for btn in keyboard_cfg['buttons']]
+            return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
         return None
 
     def _save_user_data(self, user_data: dict):
@@ -49,7 +63,7 @@ class BotLogicGenerator:
             row = {k: user_data.get(k, '') for k in self.fieldnames}
             writer.writerow(row)
 
-            # Загружаем на Яндекс.Диск
+        # Загружаем на Яндекс.Диск
         try:
             y = yadisk.Client(token=os.getenv('YANDEX_DISK_TOKEN'))
             filename = pathlib.Path(self.csv_path).name
@@ -57,96 +71,116 @@ class BotLogicGenerator:
         except Exception as e:
             logger.error(f"Ошибка при загрузке на Яндекс.Диск: {e}")
 
-    def _make_handler(self, step: Dict[str, Any], state_idx: int, is_callback=False):
-        async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-            user_id = update.effective_user.id if update.effective_user else None
-            if is_callback and update.callback_query:
-                await update.callback_query.answer()
-                callback_data = update.callback_query.data
-                if 'save_to_context' in step:
-                    context.user_data[step['save_to_context']] = callback_data
-                context.user_data['user_id'] = user_id
-                # Определяем next_state из кнопки
-                next_state = None
-                keyboard_cfg = step.get('keyboard', {})
-                if keyboard_cfg and keyboard_cfg.get('type') == 'inline':
-                    for btn in keyboard_cfg.get('buttons', []):
-                        if btn.get('action') == callback_data:
-                            next_state = btn.get('next_state')
-                            break
-                # Если не найдено, fallback к next_state шага
-                if not next_state:
-                    next_state = step.get('next_state')
-                if next_state and next_state in self.state_map:
-                    next_idx = self.state_map[next_state]
-                    next_step = self.steps[next_idx]
-                    await update.callback_query.message.reply_text(
-                        next_step['message'],
-                        reply_markup=self._build_keyboard(next_step.get('keyboard'))
-                    )
-                    return next_idx
-                self._save_user_data(context.user_data)
-                return ConversationHandler.END
+    def _get_next_state(self, step: Dict[str, Any], callback_data: str = None) -> tuple:
+        """Определяет следующее состояние и шаг"""
+        next_state = None
+        
+        if callback_data:
+            # Ищем next_state в кнопках
+            keyboard_cfg = step.get('keyboard', {})
+            if keyboard_cfg and keyboard_cfg.get('type') == 'inline':
+                for btn in keyboard_cfg.get('buttons', []):
+                    if btn.get('action') == callback_data:
+                        next_state = btn.get('next_state')
+                        break
+        
+        # Если не найдено в кнопках, берем next_state шага
+        if not next_state:
+            next_state = step.get('next_state')
+        
+        if next_state and next_state in self.state_map:
+            next_idx = self.state_map[next_state]
+            return f'step_{next_idx}', self.steps[next_idx]
+        
+        return None, None
+
+    async def _handle_message(self, message: Message, state: FSMContext, step: Dict[str, Any], step_idx: int):
+        """Обработчик текстовых сообщений"""
+        user_id = message.from_user.id
+        
+        # Сохраняем данные в контекст
+        if 'save_to_context' in step:
+            await state.update_data(**{step['save_to_context']: message.text})
+        await state.update_data(user_id=user_id)
+        
+        # Определяем следующее состояние
+        next_state_name, next_step = self._get_next_state(step)
+        
+        if next_state_name and next_step:
+            # Если есть inline клавиатура, остаемся в текущем состоянии
+            if next_step.get('keyboard', {}).get('type') == 'inline':
+                keyboard = self._build_keyboard(next_step.get('keyboard'))
+                await message.answer(next_step['message'], reply_markup=keyboard)
+                await state.set_state(getattr(self.states_group, next_state_name))
             else:
-                if 'save_to_context' in step and update.message:
-                    context.user_data[step['save_to_context']] = update.message.text
-                context.user_data['user_id'] = user_id
-                keyboard = self._build_keyboard(step.get('keyboard'))
-                await update.message.reply_text(step['message'], reply_markup=keyboard)
-                next_state = step.get('next_state')
-                if not next_state and step.get('keyboard', {}).get('type') == 'inline':
-                    return state_idx
-                if next_state and next_state in self.state_map:
-                    return self.state_map[next_state]
-                self._save_user_data(context.user_data)
-                return ConversationHandler.END
-        return handler
+                # Переходим к следующему состоянию
+                keyboard = self._build_keyboard(next_step.get('keyboard'))
+                await message.answer(next_step['message'], reply_markup=keyboard)
+                await state.set_state(getattr(self.states_group, next_state_name))
+        else:
+            # Конец разговора
+            user_data = await state.get_data()
+            self._save_user_data(user_data)
+            await message.answer("Спасибо за ваши ответы!")
+            await state.clear()
 
-    def _make_inline_button_handler(self, step: Dict[str, Any], is_callback=False):
-        async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            user_id = update.effective_user.id if update.effective_user else None
-            # Определяем next_state из кнопки
-            next_state = None
-            await update.callback_query.answer()
-            callback_data = update.callback_query.data
-            for btn in step.get('keyboard', {}).get('buttons', []):
-                if btn.get('action') == callback_data:
-                    next_state = btn.get('next_state')
-                    next_idx = self.state_map[next_state]
-                    next_step = self.steps[next_idx]
-                    if 'save_to_context' in step:
-                        context.user_data[next_step['save_to_context']] = callback_data
-                    context.user_data['user_id'] = user_id
-                    break
+    async def _handle_callback(self, callback: CallbackQuery, state: FSMContext, step: Dict[str, Any], step_idx: int):
+        """Обработчик callback кнопок"""
+        user_id = callback.from_user.id
+        callback_data = callback.data
+        
+        await callback.answer()
+        
+        # Сохраняем данные в контекст
+        if 'save_to_context' in step:
+            await state.update_data(**{step['save_to_context']: callback_data})
+        await state.update_data(user_id=user_id)
+        
+        # Определяем следующее состояние
+        next_state_name, next_step = self._get_next_state(step, callback_data)
+        
+        if next_state_name and next_step:
+            keyboard = self._build_keyboard(next_step.get('keyboard'))
+            await callback.message.answer(next_step['message'], reply_markup=keyboard)
+            await state.set_state(getattr(self.states_group, next_state_name))
+        else:
+            # Конец разговора
+            user_data = await state.get_data()
+            self._save_user_data(user_data)
+            await callback.message.answer("Спасибо за ваши ответы!")
+            await state.clear()
 
-            # Если не найдено, fallback к next_state шага
-            if not next_state:
-                next_state = step.get('next_state')
+    def _create_step_handler(self, step: Dict[str, Any], step_idx: int):
+        """Создает обработчик для конкретного шага"""
+        async def message_handler(message: Message, state: FSMContext):
+            await self._handle_message(message, state, step, step_idx)
+        
+        async def callback_handler(callback: CallbackQuery, state: FSMContext):
+            await self._handle_callback(callback, state, step, step_idx)
+        
+        return message_handler, callback_handler
 
-            if next_state and next_state in self.state_map:
-                next_idx = self.state_map[next_state]
-                next_step = self.steps[next_idx]
-                await update.callback_query.message.reply_text(
-                    next_step['message'],
-                    reply_markup=self._build_keyboard(next_step.get('keyboard'))
-                )
-                self._save_user_data(context.user_data)
-                return next_idx
-            return ConversationHandler.END
-        return handler
-
-
-    def generate_conversation_handler(self):
-        entry_points = [CommandHandler('start', self._make_handler(self.steps[0], 0))]
-        states = defaultdict(list)
+    def register_handlers(self, router: Router):
+        """Регистрирует все обработчики в роутере"""
+        
+        # Обработчик команды /start
+        async def start_handler(message: Message, state: FSMContext):
+            await state.clear()
+            first_step = self.steps[0]
+            keyboard = self._build_keyboard(first_step.get('keyboard'))
+            await message.answer(first_step['message'], reply_markup=keyboard)
+            await state.set_state(getattr(self.states_group, 'step_0'))
+        
+        router.message.register(start_handler, Command("start"))
+        
+        # Регистрируем обработчики для каждого шага
         for idx, step in enumerate(self.steps):
-            states[idx].append(MessageHandler(filters.TEXT & ~filters.COMMAND, self._make_handler(step, idx)))
+            state = getattr(self.states_group, f'step_{idx}')
+            message_handler, callback_handler = self._create_step_handler(step, idx)
+            
+            # Регистрируем обработчик сообщений
+            router.message.register(message_handler, StateFilter(state))
+            
+            # Регистрируем обработчик callback если есть inline клавиатура
             if step.get('keyboard', {}) and step.get('keyboard', {}).get('type') == 'inline':
-                # states[idx].append(CallbackQueryHandler(self._make_handler(step, idx, is_callback=True)))
-                states[idx].append(CallbackQueryHandler(self._make_inline_button_handler(step, is_callback=True)))
-
-        return ConversationHandler(
-            entry_points=entry_points,
-            states=states,
-            fallbacks=[]
-        )
+                router.callback_query.register(callback_handler, StateFilter(state))
