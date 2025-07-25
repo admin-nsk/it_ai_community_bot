@@ -41,6 +41,8 @@ class Event:
     description: str
     start_date: datetime
     end_date: datetime
+    price_per_user: int
+    total_price: int
     count_places: int
     is_active: bool
 
@@ -250,7 +252,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, name, description, start_date, end_date, count_places, is_active
+                SELECT id, name, description, start_date, end_date, count_places, is_active, price_per_user, total_price
                 FROM events 
                 WHERE is_active = TRUE
                 ORDER BY start_date
@@ -262,7 +264,8 @@ class Database:
                     id=row[0], name=row[1], description=row[2],
                     start_date=datetime.fromisoformat(row[3]),
                     end_date=datetime.fromisoformat(row[4]),
-                    count_places=row[5], is_active=bool(row[6])
+                    price_per_user=row[7], total_price=row[8],
+                    count_places=row[7], is_active=bool(row[8])
                 ))
             return events
     
@@ -271,7 +274,7 @@ class Database:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, name, description, start_date, end_date, count_places, is_active
+                SELECT id, name, description, start_date, end_date, count_places, is_active, price_per_user, total_price
                 FROM events WHERE id = ?
             ''', (event_id,))
             
@@ -281,7 +284,8 @@ class Database:
                     id=row[0], name=row[1], description=row[2],
                     start_date=datetime.fromisoformat(row[3]),
                     end_date=datetime.fromisoformat(row[4]),
-                    count_places=row[5], is_active=bool(row[6])
+                    count_places=row[5], is_active=bool(row[6]),
+                    price_per_user=row[7], total_price=row[8],
                 )
             return None
     

@@ -5,7 +5,8 @@ from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, \
+    BotCommandScopeDefault
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
@@ -341,7 +342,7 @@ class CommunityBot:
     def _register_survey_handlers(self, router: Router):
         """Регистрация обработчиков для опросов"""
         # Регистрируем обработчики для всех известных опросов
-        known_surveys = ['welcome.yaml', 'survey_topic_meeting.yaml']
+        known_surveys = ['survey_topic_meeting.yaml']
         
         for survey_file in known_surveys:
             try:
@@ -378,6 +379,19 @@ class CommunityBot:
         # Подключаем кастомный welcome-опрос
         register_welcome_survey(router)
 
+    async def set_commands(self, bot):
+        """Set bot commands."""
+        commands = [
+            BotCommand(command='start', description='Старт'),
+            BotCommand(command='add_task', description='Добавить задачу'),
+            BotCommand(command='daily_tasks', description='Задачи на день'),
+            BotCommand(command='notes', description='Заметка'),
+            BotCommand(command='yesterday_note', description='Заметка за вчера'),
+            BotCommand(command='tasks', description='Задачи'),
+            BotCommand(command='cancel', description='Cancel'),
+        ]
+        await bot.set_my_commands(commands, BotCommandScopeDefault())
+
 def run_bot():
     """Запуск бота."""
     # Создаем бота и диспетчер
@@ -390,7 +404,8 @@ def run_bot():
     # Создаем экземпляр бота и регистрируем обработчики
     community_bot = CommunityBot()
     community_bot.register_handlers(router)
-    
+    community_bot.set_commands(bot)
+
     # Регистрируем роутер
     dp.include_router(router)
     
