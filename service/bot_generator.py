@@ -31,7 +31,10 @@ class BotLogicGenerator:
         self.states_group = self._create_states_group()
 
     def _set_csv_path(self):
-        self.csv_path = f'{self.parser.get_name()}.csv'
+        reports_dir = os.path.join(os.getcwd(), 'reports')
+        if not os.path.exists(reports_dir):
+            os.makedirs(reports_dir)
+        self.csv_path = os.path.join(reports_dir, f'{self.parser.get_name()}.csv')
 
     def _create_states_group(self):
         """Создает класс состояний для FSM"""
@@ -87,7 +90,7 @@ class BotLogicGenerator:
         # Если не найдено в кнопках, берем next_state шага
         if not next_state:
             next_state = step.get('next_state')
-        
+
         if next_state and next_state in self.state_map:
             next_idx = self.state_map[next_state]
             return f'step_{next_idx}', self.steps[next_idx]
@@ -105,6 +108,13 @@ class BotLogicGenerator:
         
         # Определяем следующее состояние
         next_state_name, next_step = self._get_next_state(step)
+        if next_step and next_step.get('last_step'):
+            if 'save_to_context' in next_step:
+                await state.update_data(**{next_step['save_to_context']: message.text})
+                user_data = await state.get_data()
+                self._save_user_data(user_data)
+                await message.answer("Спасибо за ваши ответы!")
+                await state.clear()
         
         if next_step is not None:
             keyboard = self._build_keyboard(next_step.get('keyboard'))
@@ -118,41 +128,41 @@ class BotLogicGenerator:
             await state.clear()
             # --- Обновление пользователя в БД после welcome-опроса ---
             if self.parser.get_name() == "welcome":
-                from service.database import Database
-                db = Database()
-                telegram_id = str(user_data.get("user_id"))
-                name = user_data.get("name")
-                contact_choice = user_data.get("contact_choice")
-                phone_or_email = user_data.get("phone_or_email")
-                is_allow_notify = user_data.get("is_allow_notify")
-                allow_notify = True if is_allow_notify in ("Да", "yes_notify", "True", True) else False
-                user = db.get_user_by_telegram_id(telegram_id)
-                if user:
-                    kwargs = {}
-                    if name:
-                        kwargs["name"] = name
-                    if contact_choice == "phone" and phone_or_email:
-                        kwargs["phone"] = phone_or_email
-                    if contact_choice == "email" and phone_or_email:
-                        kwargs["email"] = phone_or_email
-                    kwargs["is_allow_notify"] = allow_notify
-                    db.update_user_fields(telegram_id, **kwargs)
+                await self._handle_welcome_survey(user_data)
 
     async def _handle_callback(self, callback: CallbackQuery, state: FSMContext, step: Dict[str, Any], step_idx: int):
-        """Обработчик callback кнопок"""
         user_id = callback.from_user.id
         callback_data = callback.data
-        
         await callback.answer()
-        
         # Сохраняем данные в контекст
         if 'save_to_context' in step:
-            await state.update_data(**{step['save_to_context']: callback_data})
+            value = callback_data
+            keyboard_cfg = step.get('keyboard', {})
+            if keyboard_cfg and keyboard_cfg.get('type') == 'inline':
+                for btn in keyboard_cfg.get('buttons', []):
+                    if btn.get('action') == callback_data:
+                        value = btn.get('text', callback_data)
+                        break
+            await state.update_data(**{step['save_to_context']: value})
         await state.update_data(user_id=user_id)
-        
+
         # Определяем следующее состояние
         next_state_name, next_step = self._get_next_state(step, callback_data)
-        
+
+        if next_step and next_step.get('last_step'):
+            if 'save_to_context' in next_step:
+                value = callback_data
+                keyboard_cfg = next_step.get('keyboard', {})
+                if keyboard_cfg and keyboard_cfg.get('type') == 'inline':
+                    for btn in keyboard_cfg.get('buttons', []):
+                        if btn.get('action') == callback_data:
+                            value = btn.get('text', callback_data)
+                            break
+                await state.update_data(**{next_step['save_to_context']: value})
+            user_data = await state.get_data()
+            self._save_user_data(user_data)
+            await state.clear()
+
         if next_step is not None:
             keyboard = self._build_keyboard(next_step.get('keyboard'))
             await callback.message.answer(next_step['message'], reply_markup=keyboard)
@@ -163,27 +173,29 @@ class BotLogicGenerator:
             self._save_user_data(user_data)
             await callback.message.answer("Спасибо за ваши ответы!")
             await state.clear()
-            # --- Обновление пользователя в БД после welcome-опроса ---
             if self.parser.get_name() == "welcome":
-                from service.database import Database
-                db = Database()
-                telegram_id = str(user_data.get("user_id"))
-                name = user_data.get("name")
-                contact_choice = user_data.get("contact_choice")
-                phone_or_email = user_data.get("phone_or_email")
-                is_allow_notify = user_data.get("is_allow_notify")
-                allow_notify = True if is_allow_notify in ("Да", "yes_notify", "True", True) else False
-                user = db.get_user_by_telegram_id(telegram_id)
-                if user:
-                    kwargs = {}
-                    if name:
-                        kwargs["name"] = name
-                    if contact_choice == "phone" and phone_or_email:
-                        kwargs["phone"] = phone_or_email
-                    if contact_choice == "email" and phone_or_email:
-                        kwargs["email"] = phone_or_email
-                    kwargs["is_allow_notify"] = allow_notify
-                    db.update_user_fields(telegram_id, **kwargs)
+                await self._handle_welcome_survey(user_data)
+
+    async def _handle_welcome_survey(self, user_data):
+        from service.database import Database
+        db = Database()
+        telegram_id = str(user_data.get("user_id"))
+        name = user_data.get("name")
+        contact_choice = user_data.get("contact_choice")
+        phone_or_email = user_data.get("phone_or_email")
+        is_allow_notify = user_data.get("is_allow_notify")
+        allow_notify = True if is_allow_notify in ("Да", "yes_notify", "True", True) else False
+        user = db.get_user_by_telegram_id(telegram_id)
+        if user:
+            kwargs = {}
+            if name:
+                kwargs["name"] = name
+            if contact_choice == "phone" and phone_or_email:
+                kwargs["phone"] = phone_or_email
+            if contact_choice == "email" and phone_or_email:
+                kwargs["email"] = phone_or_email
+            kwargs["is_allow_notify"] = allow_notify
+            db.update_user_fields(telegram_id, **kwargs)
 
     def _create_step_handler(self, step: Dict[str, Any], step_idx: int):
         """Создает обработчик для конкретного шага"""

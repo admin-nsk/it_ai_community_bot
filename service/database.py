@@ -124,6 +124,8 @@ class Database:
                     name VARCHAR(2000) NOT NULL,
                     description TEXT NOT NULL,
                     start_date TIMESTAMP NOT NULL,
+                    total_price INTEGER NOT NULL,
+                    price_per_user INTEGER NOT NULL,
                     end_date TIMESTAMP NOT NULL,
                     count_places INTEGER NOT NULL,
                     is_active BOOLEAN DEFAULT FALSE
@@ -158,10 +160,23 @@ class Database:
                     user_id INTEGER NOT NULL,
                     event_id INTEGER NOT NULL,
                     type_of_participant VARCHAR(20) DEFAULT 'участник',
+                    is_paid BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id),
                     FOREIGN KEY (event_id) REFERENCES events(id)
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_niche (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    niche VARCHAR(200) NOT NULL,
+                    is_leader BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             ''')
             

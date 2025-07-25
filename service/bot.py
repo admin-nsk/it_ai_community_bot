@@ -38,7 +38,8 @@ class CommunityBot:
     def get_survey_generator(self, scenario_file: str) -> BotLogicGenerator:
         """Получение или создание генератора опроса"""
         if scenario_file not in self.bot_generators:
-            template_path = f'/home/petrov.aleksey140/Projects/it_ai_community_bot/service/bot_templates/{scenario_file}'
+            templates_path = os.getenv('TEMPLATES_PATH')
+            template_path = os.path.join(templates_path, scenario_file)
             self.bot_generators[scenario_file] = BotLogicGenerator(template_path)
         return self.bot_generators[scenario_file]
     
@@ -60,8 +61,8 @@ class CommunityBot:
         
         # Создаем inline кнопки
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пройти вводный опрос", callback_data="intro_survey")],
-            [InlineKeyboardButton(text="Описание возможностей", callback_data="show_capabilities")]
+            [InlineKeyboardButton(text="📝 Пройти вводный опрос", callback_data="intro_survey")],
+            [InlineKeyboardButton(text="ℹ️ Справка", callback_data="show_capabilities")]
         ])
         
         await message.answer(welcome_text, reply_markup=keyboard)
@@ -201,6 +202,10 @@ class CommunityBot:
         event_text = f"📅 {event.name}\n\n"
         event_text += f"📅 Начало: {event.start_date.strftime('%d.%m.%Y %H:%M')}\n"
         event_text += f"📅 Окончание: {event.end_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+        if event.count_places:
+            event_text += f"👥 Количество мест: {event.count_places}\n"
+        if event.price_per_user:
+            event_text += f"💰 Стоимость участия: {event.price_per_user}₽\n"
         event_text += f"📝 Описание:\n{event.description}"
         
         # Получаем кнопки для события

@@ -5,43 +5,41 @@ steps:
     save_to_context: "user_name"   # Сохраняет введённое сообщение в контекст под этим ключом
     next_state: "ask_email"
     keyboard: null
+    last_step: false
 
   - name: "ask_email"
     message: "Введите ваш email:"
-    save_to_context: "user_name"
+    save_to_context: "user_email"
     next_state: "choose_option"
     keyboard: null
+    last_step: false
 
   - name: "choose_option"
-    message: "Выберите вариант:"
-    save_to_context: "user_email"
+    message: "Готовы посетить встречу:"
     keyboard:
       type: "inline"
       buttons:
-        - text: "Вариант 1"
-          action: "option_1"
+        - text: "Да"
+          action: "yes"
           button_type: "callback"
-          next_state: "option_1_result"
-        - text: "Вариант 2"
-          action: "option_2"
+          next_state: "yes_result"
+        - text: "Нет"
+          action: "no"
           button_type: "callback"
-          next_state: "option_2_result"
+          next_state: "no_result"
+    last_step: false
 
-  - name: "option_1_result"
+  - name: "yes_result"
     save_to_context: "chosen_option"
-    message: "Вы выбрали вариант 1! Спасибо."
-    next_state: "end"
+    message: "Вы готовы прийти! Спасибо.\n Опрос завершён."
     keyboard: null
+    last_step: true
 
-  - name: "option_2_result"
+  - name: "no_result"
     save_to_context: "chosen_option"
-    message: "Вы выбрали вариант 2! Спасибо."
-    next_state: "end"
+    message: "Очень жаль, что не сможете! Спасибо.\n Опрос завершён."
     keyboard: null
-
-  - name: "end"
-    message: "Опрос завершён."
-    keyboard: null
+    last_step: true
 
   - name: "help"
     message: "Здесь будет справочная информация."
@@ -51,6 +49,8 @@ steps:
         - text: "Назад"
           action: "start"
           button_type: "text"
+    last_step: false
   - name: "input_name"
     message: "Пожалуйста, введите ваше имя:"
     next_state: "input_email"
+    last_step: false
