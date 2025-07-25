@@ -1,0 +1,56 @@
+name: "survey_topic_meeting"
+steps:
+  - name: "start"
+    message: "Добро пожаловать! Введите ваше имя:"
+    save_to_context: "user_name"   # Сохраняет введённое сообщение в контекст под этим ключом
+    next_state: "ask_email"
+    keyboard: null
+    last_step: false
+
+  - name: "ask_email"
+    message: "Введите ваш email:"
+    save_to_context: "user_email"
+    next_state: "choose_option"
+    keyboard: null
+    last_step: false
+
+  - name: "choose_option"
+    message: "Готовы посетить встречу:"
+    keyboard:
+      type: "inline"
+      buttons:
+        - text: "Да"
+          action: "yes"
+          button_type: "callback"
+          next_state: "yes_result"
+        - text: "Нет"
+          action: "no"
+          button_type: "callback"
+          next_state: "no_result"
+    last_step: false
+
+  - name: "yes_result"
+    save_to_context: "chosen_option"
+    message: "Вы готовы прийти! Спасибо.\n Опрос завершён."
+    keyboard: null
+    last_step: true
+
+  - name: "no_result"
+    save_to_context: "chosen_option"
+    message: "Очень жаль, что не сможете! Спасибо.\n Опрос завершён."
+    keyboard: null
+    last_step: true
+
+  - name: "help"
+    message: "Здесь будет справочная информация."
+    keyboard:
+      type: "reply"
+      buttons:
+        - text: "Назад"
+          action: "start"
+          button_type: "text"
+    last_step: false
+  - name: "input_name"
+    message: "Пожалуйста, введите ваше имя:"
+    next_state: "input_email"
+    last_step: false
