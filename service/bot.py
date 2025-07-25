@@ -382,13 +382,13 @@ class CommunityBot:
     async def set_commands(self, bot):
         """Set bot commands."""
         commands = [
-            BotCommand(command='start', description='Старт'),
-            BotCommand(command='add_task', description='Добавить задачу'),
-            BotCommand(command='daily_tasks', description='Задачи на день'),
-            BotCommand(command='notes', description='Заметка'),
-            BotCommand(command='yesterday_note', description='Заметка за вчера'),
-            BotCommand(command='tasks', description='Задачи'),
-            BotCommand(command='cancel', description='Cancel'),
+            BotCommand(command='start', description='Старт и приветствие'),
+            BotCommand(command='events', description='Доступные мероприятия'),
+            BotCommand(command='surveys', description='Опросы сообщества'),
+            BotCommand(command='myevents', description='Мои мероприятия'),
+            BotCommand(command='suggest', description='Предложение/вопрос'),
+            BotCommand(command='onoff_notify', description='Уведомления вкл/выкл'),
+            BotCommand(command='offbot', description='Отключить бота'),
         ]
         await bot.set_my_commands(commands, BotCommandScopeDefault())
 
@@ -404,10 +404,16 @@ def run_bot():
     # Создаем экземпляр бота и регистрируем обработчики
     community_bot = CommunityBot()
     community_bot.register_handlers(router)
-    community_bot.set_commands(bot)
-
+    
+    # Устанавливаем команды бота
+    async def set_commands():
+        await community_bot.set_commands(bot)
+    
     # Регистрируем роутер
     dp.include_router(router)
+    
+    # Устанавливаем команды при старте
+    dp.startup.register(set_commands)
     
     # Запускаем бота
     dp.run_polling(bot)

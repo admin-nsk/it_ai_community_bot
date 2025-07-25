@@ -313,7 +313,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT e.id, e.name, e.description, e.start_date, e.end_date, 
-                       e.count_places, e.is_active, er.type_of_participant
+                       e.count_places, e.is_active, er.type_of_participant, e.price_per_user, e.total_price
                 FROM events e
                 JOIN event_registration er ON e.id = er.event_id
                 WHERE er.user_id = ?
@@ -326,7 +326,8 @@ class Database:
                     id=row[0], name=row[1], description=row[2],
                     start_date=datetime.fromisoformat(row[3]),
                     end_date=datetime.fromisoformat(row[4]),
-                    count_places=row[5], is_active=bool(row[6])
+                    count_places=row[5], is_active=bool(row[6]),
+                    price_per_user=row[8], total_price=row[9],
                 )
                 registrations.append((event, row[7]))
             return registrations
