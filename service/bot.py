@@ -57,8 +57,17 @@ class CommunityBot:
                 name=message.from_user.full_name
             )
         
+        # Устанавливаем админские команды для суперпользователей
+        if user.is_superuser:
+            try:
+                await self.set_admin_commands(message.bot, telegram_id)
+            except Exception as e:
+                logger.error(f"Ошибка установки админских команд для {telegram_id}: {e}")
+        
         # Приветственное сообщение
         welcome_text = f"Приветствую, {message.from_user.first_name or 'пользователь'}!"
+        if user.is_superuser:
+            welcome_text += "\n\n🔧 <b>Режим администратора активен</b>"
         
         # Создаем inline кнопки
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -66,7 +75,7 @@ class CommunityBot:
             [InlineKeyboardButton(text="ℹ️ Справка", callback_data="show_capabilities")]
         ])
         
-        await message.answer(welcome_text, reply_markup=keyboard)
+        await message.answer(welcome_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     
     async def events_command(self, message: Message):
         """Обработчик команды /events"""
@@ -160,6 +169,70 @@ class CommunityBot:
             await message.answer("Ваши данные удалены. Бот отключен.")
         else:
             await message.answer("Ошибка при удалении данных.")
+    
+    async def event_registrations_command(self, message: Message):
+        """Обработчик команды /event_registrations (только для суперпользователей)"""
+        telegram_id = str(message.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        
+        if not user or not user.is_superuser:
+            await message.answer("У вас нет прав доступа к этой команде.")
+            return
+        
+        registrations = self.db.get_all_event_registrations()
+        
+        if not registrations:
+            await message.answer("Нет регистраций на активные мероприятия.")
+            return
+        
+        # Группируем регистрации по событиям
+        events_dict = {}
+        for event, user_reg, participant_type, registration_date in registrations:
+            if event.id not in events_dict:
+                events_dict[event.id] = {
+                    'event': event,
+                    'registrations': []
+                }
+            events_dict[event.id]['registrations'].append((user_reg, participant_type, registration_date))
+        
+        # Отправляем отчет по частям
+        current_part = "📊 <b>Регистрации на активные мероприятия:</b>\n\n"
+        
+        for event_data in events_dict.values():
+            event = event_data['event']
+            registrations_list = event_data['registrations']
+            
+            event_text = f"📅 <b>{event.name}</b>\n"
+            event_text += f"🗓 {event.start_date.strftime('%d.%m.%Y %H:%M')} - {event.end_date.strftime('%d.%m.%Y %H:%M')}\n"
+            event_text += f"👥 Всего регистраций: {len(registrations_list)}\n\n"
+            
+            # Группируем по типам участников
+            participants_by_type = {}
+            for user_reg, participant_type, reg_date in registrations_list:
+                if participant_type not in participants_by_type:
+                    participants_by_type[participant_type] = []
+                participants_by_type[participant_type].append((user_reg, reg_date))
+            
+            for participant_type, users_list in participants_by_type.items():
+                event_text += f"<b>{participant_type.title()}:</b>\n"
+                for user_reg, reg_date in users_list:
+                    name = user_reg.name or "Не указано"
+                    username = f"@{user_reg.username}" if user_reg.username else "нет username"
+                    event_text += f"• {name} ({username}) - {reg_date.strftime('%d.%m.%Y %H:%M')}\n"
+                event_text += "\n"
+            
+            event_text += "─" * 30 + "\n\n"
+            
+            # Если добавление этого события превысит лимит, отправляем текущую часть
+            if len(current_part + event_text) > 4096:
+                await message.answer(current_part, parse_mode=ParseMode.HTML)
+                current_part = "📊 <b>Регистрации на активные мероприятия (продолжение):</b>\n\n" + event_text
+            else:
+                current_part += event_text
+        
+        # Отправляем оставшуюся часть
+        if current_part.strip():
+            await message.answer(current_part, parse_mode=ParseMode.HTML)
     
     async def handle_suggestion(self, message: Message, state: FSMContext):
         """Обработчик предложений пользователей"""
@@ -363,6 +436,7 @@ class CommunityBot:
         router.message.register(bot_instance.suggest_command, Command("suggest"))
         router.message.register(bot_instance.onoff_notify_command, Command("onoff_notify"))
         router.message.register(bot_instance.offbot_command, Command("offbot"))
+        router.message.register(bot_instance.event_registrations_command, Command("event_registrations"))
         
         # Обработка предложений
         router.message.register(bot_instance.handle_suggestion, StateFilter(UserStates.waiting_for_suggestion))
@@ -381,7 +455,8 @@ class CommunityBot:
 
     async def set_commands(self, bot):
         """Set bot commands."""
-        commands = [
+        # Команды для обычных пользователей
+        user_commands = [
             BotCommand(command='start', description='Старт и приветствие'),
             BotCommand(command='events', description='Доступные мероприятия'),
             BotCommand(command='surveys', description='Опросы сообщества'),
@@ -390,7 +465,20 @@ class CommunityBot:
             BotCommand(command='onoff_notify', description='Уведомления вкл/выкл'),
             BotCommand(command='offbot', description='Отключить бота'),
         ]
-        await bot.set_my_commands(commands, BotCommandScopeDefault())
+        await bot.set_my_commands(user_commands, BotCommandScopeDefault())
+    
+    async def set_admin_commands(self, bot, telegram_id: str):
+        """Set admin commands for superuser."""
+        from aiogram.types import BotCommandScopeChat
+        
+        admin_commands = [
+            BotCommand(command='start', description='Старт и приветствие'),
+            BotCommand(command='events', description='Доступные мероприятия'),
+            BotCommand(command='surveys', description='Опросы сообщества'),
+            BotCommand(command='myevents', description='Мои мероприятия'),
+            BotCommand(command='event_registrations', description='📊 Регистрации на события'),
+        ]
+        await bot.set_my_commands(admin_commands, BotCommandScopeChat(chat_id=int(telegram_id)))
 
 def run_bot():
     """Запуск бота."""
@@ -408,6 +496,14 @@ def run_bot():
     # Устанавливаем команды бота
     async def set_commands():
         await community_bot.set_commands(bot)
+        
+        # Устанавливаем админские команды для всех суперпользователей
+        try:
+            superusers = community_bot.db.get_superusers()
+            for superuser in superusers:
+                await community_bot.set_admin_commands(bot, superuser.telegram_id)
+        except Exception as e:
+            logger.error(f"Ошибка установки админских команд при старте: {e}")
     
     # Регистрируем роутер
     dp.include_router(router)

@@ -491,4 +491,44 @@ class Database:
             values.append(telegram_id)
             cursor.execute(f"UPDATE users SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?", values)
             conn.commit()
-            return cursor.rowcount > 0 
+            return cursor.rowcount > 0
+
+    def get_all_event_registrations(self) -> List[Tuple[Event, User, str, datetime]]:
+        """Получение всех регистраций на активные события для админов"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT e.id, e.name, e.description, e.start_date, e.end_date, 
+                       e.count_places, e.is_active, e.price_per_user, e.total_price,
+                       u.id, u.telegram_id, u.username, u.name, u.phone, u.email, u.description,
+                       u.created_at, u.updated_at, u.is_superuser, u.is_allow_notify, u.is_active, u.is_blocked,
+                       er.type_of_participant, er.created_at
+                FROM events e
+                JOIN event_registration er ON e.id = er.event_id
+                JOIN users u ON er.user_id = u.id
+                WHERE e.is_active = TRUE
+                ORDER BY e.start_date, er.created_at
+            ''')
+            
+            registrations = []
+            for row in cursor.fetchall():
+                event = Event(
+                    id=row[0], name=row[1], description=row[2],
+                    start_date=datetime.fromisoformat(row[3]),
+                    end_date=datetime.fromisoformat(row[4]),
+                    count_places=row[5], is_active=bool(row[6]),
+                    price_per_user=row[7], total_price=row[8],
+                )
+                user = User(
+                    id=row[9], telegram_id=row[10], username=row[11], name=row[12],
+                    phone=row[13], email=row[14], description=row[15],
+                    created_at=datetime.fromisoformat(row[16]),
+                    updated_at=datetime.fromisoformat(row[17]) if row[17] else None,
+                    is_superuser=bool(row[18]), is_allow_notify=bool(row[19]),
+                    is_active=bool(row[20]), is_blocked=bool(row[21])
+                )
+                participant_type = row[22]
+                registration_date = datetime.fromisoformat(row[23])
+                
+                registrations.append((event, user, participant_type, registration_date))
+            return registrations 
