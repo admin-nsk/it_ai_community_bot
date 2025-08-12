@@ -133,7 +133,7 @@ class CommunityBot:
         # Формируем список регистраций
         events_text = "Ваши мероприятия:\n\n"
         for event, participant_type in registrations:
-            events_text += f"📅 {event.name}\n"
+            events_text += f"📍 {event.name}\n"
             events_text += f"📅 {event.start_date.strftime('%d.%m.%Y %H:%M')} - {event.end_date.strftime('%d.%m.%Y %H:%M')}\n"
             events_text += f"👤 Тип участия: {participant_type}\n\n"
         
@@ -273,7 +273,7 @@ class CommunityBot:
             return
         
         # Формируем информацию о событии
-        event_text = f"📅 {event.name}\n\n"
+        event_text = f"📍📢 {event.name}\n\n"
         event_text += f"📅 Начало: {event.start_date.strftime('%d.%m.%Y %H:%M')}\n"
         event_text += f"📅 Окончание: {event.end_date.strftime('%d.%m.%Y %H:%M')}\n\n"
         if event.count_places:
