@@ -126,18 +126,24 @@ class CommunityBot:
         
         registrations = self.db.get_user_registrations(user.id)
         
-        if not registrations:
-            await message.answer("Вы не зарегистрированы ни на одно мероприятие.")
+        # Оставляем только активные события
+        active_registrations = [(event, ptype) for event, ptype in registrations if getattr(event, 'is_active', False)]
+        
+        if not active_registrations:
+            await message.answer("Нет активных мероприятий, на которые вы зарегистрированы.")
             return
         
-        # Формируем список регистраций
-        events_text = "Ваши мероприятия:\n\n"
-        for event, participant_type in registrations:
-            events_text += f"📍 {event.name}\n"
-            events_text += f"📅 {event.start_date.strftime('%d.%m.%Y %H:%M')} - {event.end_date.strftime('%d.%m.%Y %H:%M')}\n"
-            events_text += f"👤 Тип участия: {participant_type}\n\n"
-        
-        await message.answer(events_text)
+        # Каждое мероприятие отдельным сообщением с кнопкой отмены
+        for event, participant_type in active_registrations:
+            event_text = (
+                f"📍 {event.name}\n"
+                f"📅 {event.start_date.strftime('%d.%m.%Y %H:%M')} - {event.end_date.strftime('%d.%m.%Y %H:%M')}\n"
+                f"👤 Тип участия: {participant_type}"
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Отмена регистрации", callback_data=f"event_action_{event.id}_unregister")]
+            ])
+            await message.answer(event_text, reply_markup=keyboard)
     
     async def suggest_command(self, message: Message, state: FSMContext):
         """Обработчик команды /suggest"""
