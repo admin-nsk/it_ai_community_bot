@@ -31,6 +31,13 @@ class UserStates(StatesGroup):
     waiting_for_suggestion = State()
     waiting_for_participant_type = State()
 
+class AdminSendInfoStates(StatesGroup):
+    choosing_action = State()
+    waiting_broadcast_text = State()
+    choosing_event_for_message = State()
+    waiting_event_message_text = State()
+    choosing_event_for_confirmation = State()
+
 class CommunityBot:
     def __init__(self):
         self.db = Database()
@@ -76,6 +83,257 @@ class CommunityBot:
         ])
         
         await message.answer(welcome_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+    async def send_info_command(self, message: Message, state: FSMContext):
+        """Админская команда /send_info: меню выбора рассылки/подтверждений."""
+        telegram_id = str(message.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await message.answer("У вас нет прав доступа к этой команде.")
+            return
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Информация для всех", callback_data="admin_sendinfo_all")],
+            [InlineKeyboardButton(text="Информация для участников события", callback_data="admin_sendinfo_by_event")],
+            [InlineKeyboardButton(text="Подтверждение участия", callback_data="admin_sendinfo_confirm")]
+        ])
+        await state.set_state(AdminSendInfoStates.choosing_action)
+        await message.answer("Выберите действие:", reply_markup=keyboard)
+
+    async def _split_text(self, text: str, chunk_size: int = 4096):
+        for i in range(0, len(text), chunk_size):
+            yield text[i:i + chunk_size]
+
+    def _to_chat_id(self, telegram_id: str):
+        try:
+            return int(telegram_id)
+        except Exception:
+            return telegram_id
+
+    async def handle_sendinfo_action(self, callback: CallbackQuery, state: FSMContext):
+        # Проверка прав
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await callback.answer("Нет прав", show_alert=True)
+            return
+        data = callback.data
+        if data == "admin_sendinfo_all":
+            await state.set_state(AdminSendInfoStates.waiting_broadcast_text)
+            await callback.message.edit_text("Введите текст сообщения для всех пользователей с включёнными уведомлениями:")
+        elif data == "admin_sendinfo_by_event":
+            events = self.db.get_active_events()
+            if not events:
+                await callback.message.edit_text("Нет активных мероприятий.")
+                await state.clear()
+                await callback.answer()
+                return
+            buttons = [[InlineKeyboardButton(text=e.name, callback_data=f"as_ev_{e.id}")] for e in events]
+            await state.set_state(AdminSendInfoStates.choosing_event_for_message)
+            await callback.message.edit_text("Выберите событие для рассылки:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        elif data == "admin_sendinfo_confirm":
+            events = self.db.get_active_events()
+            if not events:
+                await callback.message.edit_text("Нет активных мероприятий.")
+                await state.clear()
+                await callback.answer()
+                return
+            buttons = [[InlineKeyboardButton(text=e.name, callback_data=f"admin_confirm_selectevent_{e.id}")] for e in events]
+            await state.set_state(AdminSendInfoStates.choosing_event_for_confirmation)
+            await callback.message.edit_text("Выберите событие для подтверждения участия:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await callback.answer()
+
+    async def handle_broadcast_all_text(self, message: Message, state: FSMContext):
+        """Получаем текст и рассылаем всем, у кого включены уведомления."""
+        telegram_id = str(message.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await message.answer("Недостаточно прав.")
+            await state.clear()
+            return
+        text = message.text
+        recipients = self.db.get_all_notifiable_users()
+        sent, failed = 0, 0
+        for recipient in recipients:
+            try:
+                chat_id = self._to_chat_id(recipient.telegram_id)
+                async for chunk in self._split_text(text):
+                    await message.bot.send_message(chat_id, chunk)
+                sent += 1
+            except Exception as e:
+                failed += 1
+                logger.error(f"Ошибка отправки пользователю {recipient.telegram_id}: {e}")
+                err_text = str(e).lower()
+                if 'chat not found' in err_text or 'blocked' in err_text or 'user is deactivated' in err_text:
+                    try:
+                        self.db.update_user_fields(recipient.telegram_id, is_blocked=True, is_allow_notify=False)
+                    except Exception as _:
+                        pass
+        await message.answer(f"Готово. Успешно: {sent}, ошибок: {failed}.")
+        await state.clear()
+
+    async def handle_select_event_for_message(self, callback: CallbackQuery, state: FSMContext):
+        # Проверка прав
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await callback.answer("Нет прав", show_alert=True)
+            return
+        # Универсальный парсер id события из callback_data
+        try:
+            event_id_str = callback.data.rsplit('_', 1)[1]
+            if not event_id_str.isdigit():
+                await callback.answer("Некорректный выбор.")
+                return
+            event_id = int(event_id_str)
+        except Exception:
+            await callback.answer("Некорректный выбор.")
+            return
+        event = self.db.get_event_by_id(event_id)
+        if not event:
+            await callback.answer("Событие не найдено.")
+            return
+        await state.update_data(selected_event_id=event_id)
+        await state.set_state(AdminSendInfoStates.waiting_event_message_text)
+        await callback.message.edit_text(f"Событие: {event.name}\n\nВведите текст сообщения для участников:")
+        await callback.answer()
+
+    async def handle_event_message_text(self, message: Message, state: FSMContext):
+        """Получаем текст и рассылаем участникам выбранного события."""
+        telegram_id = str(message.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await message.answer("Недостаточно прав.")
+            await state.clear()
+            return
+        data = await state.get_data()
+        event_id = data.get('selected_event_id')
+        if not event_id:
+            await message.answer("Событие не выбрано.")
+            await state.clear()
+            return
+        recipients = self.db.get_event_registered_users(event_id)
+        text = message.text
+        sent, failed = 0, 0
+        for recipient in recipients:
+            try:
+                chat_id = self._to_chat_id(recipient.telegram_id)
+                async for chunk in self._split_text(text):
+                    await message.bot.send_message(chat_id, chunk)
+                sent += 1
+            except Exception as e:
+                failed += 1
+                logger.error(f"Ошибка отправки пользователю {recipient.telegram_id}: {e}")
+                err_text = str(e).lower()
+                if 'chat not found' in err_text or 'blocked' in err_text or 'user is deactivated' in err_text:
+                    try:
+                        self.db.update_user_fields(recipient.telegram_id, is_blocked=True)
+                    except Exception as _:
+                        pass
+        await message.answer(f"Готово. Успешно: {sent}, ошибок: {failed}.")
+        await state.clear()
+
+    async def handle_select_event_for_confirmation(self, callback: CallbackQuery, state: FSMContext):
+        # Проверка прав
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await callback.answer("Нет прав", show_alert=True)
+            return
+        parts = callback.data.split('_')
+        if len(parts) != 4 or parts[0] != 'admin' or parts[1] != 'confirm' or parts[2] != 'selectevent' or not parts[3].isdigit():
+            await callback.answer("Некорректный выбор.")
+            return
+        event_id = int(parts[3])
+        event = self.db.get_event_by_id(event_id)
+        if not event:
+            await callback.answer("Событие не найдено.")
+            return
+        recipients = self.db.get_event_registered_users(event_id)
+        if not recipients:
+            await callback.message.edit_text("На выбранное событие нет зарегистрированных пользователей.")
+            await state.clear()
+            await callback.answer()
+            return
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Подтвердить", callback_data=f"admin_confirm_yes_{event_id}")],
+            [InlineKeyboardButton(text="Отменить", callback_data=f"admin_confirm_no_{event_id}")]
+        ])
+        reminder_text = (
+            f"Вы зарегистрированы на мероприятие: {event.name}\n\n"
+            f"Пожалуйста, подтвердите участие."
+        )
+        sent, failed = 0, 0
+        for recipient in recipients:
+            try:
+                chat_id = self._to_chat_id(recipient.telegram_id)
+                await callback.bot.send_message(chat_id, reminder_text, reply_markup=keyboard)
+                sent += 1
+            except Exception as e:
+                failed += 1
+                logger.error(f"Ошибка отправки пользователю {recipient.telegram_id}: {e}")
+                err_text = str(e).lower()
+                if 'chat not found' in err_text or 'blocked' in err_text or 'user is deactivated' in err_text:
+                    try:
+                        self.db.update_user_fields(recipient.telegram_id, is_blocked=True)
+                    except Exception as _:
+                        pass
+        await callback.message.edit_text(f"Рассылка напоминаний завершена. Успешно: {sent}, ошибок: {failed}.")
+        await state.clear()
+        await callback.answer()
+
+    async def handle_user_confirm_participation(self, callback: CallbackQuery):
+        parts = callback.data.split('_')
+        if len(parts) != 4 or parts[0] != 'admin' or parts[1] != 'confirm' or parts[2] != 'yes' or not parts[3].isdigit():
+            await callback.answer("Некорректный выбор.")
+            return
+        event_id = int(parts[3])
+        event = self.db.get_event_by_id(event_id)
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if event and user:
+            note = (
+                f"✅ Подтверждение участия\n\n"
+                f"Пользователь: {user.name or ''} (@{user.username}) [id: {telegram_id}]\n"
+                f"Событие: {event.name}"
+            )
+            for su in self.db.get_superusers():
+                try:
+                    await callback.bot.send_message(su.telegram_id, note)
+                except Exception as e:
+                    logger.error(f"Ошибка отправки суперпользователю {su.telegram_id}: {e}")
+        try:
+            await callback.message.edit_text("Участие подтверждено. Спасибо!")
+        except Exception:
+            pass
+        await callback.answer("Подтверждено")
+
+    async def handle_user_cancel_participation(self, callback: CallbackQuery):
+        parts = callback.data.split('_')
+        if len(parts) != 4 or parts[0] != 'admin' or parts[1] != 'confirm' or parts[2] != 'no' or not parts[3].isdigit():
+            await callback.answer("Некорректный выбор.")
+            return
+        event_id = int(parts[3])
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        event = self.db.get_event_by_id(event_id)
+        if user and event:
+            # Отменяем регистрацию через существующий метод (обрабатывает лист ожидания)
+            self.db.unregister_user_from_event(user.id, event_id)
+            note = (
+                f"❌ Отмена участия\n\n"
+                f"Пользователь: {user.name or ''} (@{user.username}) [id: {telegram_id}]\n"
+                f"Событие: {event.name}"
+            )
+            for su in self.db.get_superusers():
+                try:
+                    await callback.bot.send_message(su.telegram_id, note)
+                except Exception as e:
+                    logger.error(f"Ошибка отправки суперпользователю {su.telegram_id}: {e}")
+        try:
+            await callback.message.edit_text("Регистрация отменена.")
+        except Exception:
+            pass
+        await callback.answer("Отменено")
     
     async def events_command(self, message: Message):
         """Обработчик команды /events"""
@@ -442,12 +700,35 @@ class CommunityBot:
         router.message.register(bot_instance.suggest_command, Command("suggest"))
         router.message.register(bot_instance.onoff_notify_command, Command("onoff_notify"))
         router.message.register(bot_instance.offbot_command, Command("offbot"))
+        router.message.register(bot_instance.send_info_command, Command("send_info"))
         router.message.register(bot_instance.event_registrations_command, Command("event_registrations"))
         
         # Обработка предложений
         router.message.register(bot_instance.handle_suggestion, StateFilter(UserStates.waiting_for_suggestion))
+        # Админские FSM обработчики
+        router.message.register(bot_instance.handle_broadcast_all_text, StateFilter(AdminSendInfoStates.waiting_broadcast_text))
+        router.message.register(bot_instance.handle_event_message_text, StateFilter(AdminSendInfoStates.waiting_event_message_text))
         
         # Callback обработчики (порядок важен!)
+        # Админские callback'и (строгие совпадения для корневых действий)
+        router.callback_query.register(
+            bot_instance.handle_select_event_for_message,
+            StateFilter(AdminSendInfoStates.choosing_event_for_message),
+            F.data.startswith("as_ev_")
+        )
+        # Совместимость со старым префиксом, если остались сообщения в истории
+        router.callback_query.register(
+            bot_instance.handle_select_event_for_message,
+            StateFilter(AdminSendInfoStates.choosing_event_for_message),
+            F.data.startswith("admin_sendinfo_selectevent_")
+        )
+        router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_sendinfo_all")
+        router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_sendinfo_by_event")
+        router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_sendinfo_confirm")
+        router.callback_query.register(bot_instance.handle_select_event_for_confirmation, F.data.startswith("admin_confirm_selectevent_"))
+        router.callback_query.register(bot_instance.handle_user_confirm_participation, F.data.startswith("admin_confirm_yes_"))
+        router.callback_query.register(bot_instance.handle_user_cancel_participation, F.data.startswith("admin_confirm_no_"))
+
         router.callback_query.register(bot_instance.handle_registration, F.data.startswith("register_"))
         router.callback_query.register(bot_instance.handle_event_action, F.data.startswith("event_action_"))
         router.callback_query.register(bot_instance.handle_event_callback, F.data.startswith("event_"))
@@ -483,6 +764,7 @@ class CommunityBot:
             BotCommand(command='surveys', description='Опросы сообщества'),
             BotCommand(command='myevents', description='Мои мероприятия'),
             BotCommand(command='event_registrations', description='📊 Регистрации на события'),
+            BotCommand(command='send_info', description='📣 Рассылки и подтверждения'),
         ]
         await bot.set_my_commands(admin_commands, BotCommandScopeChat(chat_id=int(telegram_id)))
 
