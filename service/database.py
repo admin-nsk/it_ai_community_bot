@@ -481,6 +481,61 @@ class Database:
                 ))
             return users 
 
+    def get_all_notifiable_users(self) -> List[User]:
+        """Пользователи, у кого включены уведомления и активные."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, telegram_id, username, name, phone, email, description,
+                       created_at, updated_at, is_superuser, is_allow_notify, is_active, is_blocked
+                FROM users 
+                WHERE is_allow_notify = TRUE AND is_active = TRUE AND is_blocked = FALSE
+            ''')
+            users: List[User] = []
+            for row in cursor.fetchall():
+                users.append(User(
+                    id=row[0], telegram_id=row[1], username=row[2], name=row[3],
+                    phone=row[4], email=row[5], description=row[6],
+                    created_at=datetime.fromisoformat(row[7]),
+                    updated_at=datetime.fromisoformat(row[8]) if row[8] else None,
+                    is_superuser=bool(row[9]), is_allow_notify=bool(row[10]),
+                    is_active=bool(row[11]), is_blocked=bool(row[12])
+                ))
+            return users
+
+    def get_event_registered_users(self, event_id: int) -> List[User]:
+        """Пользователи, зарегистрированные на событие (включая лист ожидания)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT u.id, u.telegram_id, u.username, u.name, u.phone, u.email, u.description,
+                       u.created_at, u.updated_at, u.is_superuser, u.is_allow_notify, u.is_active, u.is_blocked
+                FROM users u
+                JOIN event_registration er ON er.user_id = u.id
+                WHERE er.event_id = ?
+            ''', (event_id,))
+            users: List[User] = []
+            for row in cursor.fetchall():
+                users.append(User(
+                    id=row[0], telegram_id=row[1], username=row[2], name=row[3],
+                    phone=row[4], email=row[5], description=row[6],
+                    created_at=datetime.fromisoformat(row[7]),
+                    updated_at=datetime.fromisoformat(row[8]) if row[8] else None,
+                    is_superuser=bool(row[9]), is_allow_notify=bool(row[10]),
+                    is_active=bool(row[11]), is_blocked=bool(row[12])
+                ))
+            return users
+
+    def remove_user_registration(self, user_id: int, event_id: int) -> bool:
+        """Удалить регистрацию пользователя на событие."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM event_registration WHERE user_id = ? AND event_id = ?
+            ''', (user_id, event_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
     def update_user_fields(self, telegram_id: str, **fields):
         if not fields:
             return False
