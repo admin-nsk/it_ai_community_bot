@@ -24,7 +24,8 @@ def init_test_data():
         cursor.execute('''
             INSERT OR IGNORE INTO surveys (slug, name, scenario_file, is_enabled)
             VALUES 
-            ('feedback_test', 'Опрос обратной связи', 'survey_topic_meeting.yaml', TRUE)
+            ('feedback_test', 'Опрос обратной связи', 'survey_topic_meeting.yaml', TRUE),
+            ('everymonth_niche_meeting', 'Опрос по ежемесячной нишевой встрече', 'everymonth_niche_meeting.yaml', TRUE)
         ''')
         
         # Создаем тестовые кнопки

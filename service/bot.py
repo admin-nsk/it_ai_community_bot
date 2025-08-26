@@ -13,6 +13,7 @@ from aiogram.client.default import DefaultBotProperties
 from service.database import Database
 from service.bot_generator import BotLogicGenerator
 from service.welcome_survey import register_welcome_survey
+from service.states import AdminSendSurveyStates
 
 load_dotenv()
 
@@ -38,6 +39,12 @@ class AdminSendInfoStates(StatesGroup):
     waiting_event_message_text = State()
     choosing_event_for_confirmation = State()
 
+class AdminSendSurveyStates(StatesGroup):
+    choosing_action = State()
+    choosing_survey = State()
+    choosing_event = State()
+    choosing_survey_for_event = State()
+
 class CommunityBot:
     def __init__(self):
         self.db = Database()
@@ -47,7 +54,11 @@ class CommunityBot:
         """Получение или создание генератора опроса"""
         if scenario_file not in self.bot_generators:
             templates_path = os.getenv('TEMPLATES_PATH')
+            if not templates_path:
+                # Если TEMPLATES_PATH не установлен, используем относительный путь
+                templates_path = os.path.join(os.getcwd(), 'service', 'bot_templates')
             template_path = os.path.join(templates_path, scenario_file)
+            logger.info(f"Создаем генератор для файла: {template_path}")
             self.bot_generators[scenario_file] = BotLogicGenerator(template_path)
         return self.bot_generators[scenario_file]
     
@@ -94,7 +105,9 @@ class CommunityBot:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Информация для всех", callback_data="admin_sendinfo_all")],
             [InlineKeyboardButton(text="Информация для участников события", callback_data="admin_sendinfo_by_event")],
-            [InlineKeyboardButton(text="Подтверждение участия", callback_data="admin_sendinfo_confirm")]
+            [InlineKeyboardButton(text="Подтверждение участия", callback_data="admin_sendinfo_confirm")],
+            [InlineKeyboardButton(text="Отправить опрос всем", callback_data="admin_send_survey_all")],
+            [InlineKeyboardButton(text="Отправить опрос по событию", callback_data="admin_send_survey_by_event")]
         ])
         await state.set_state(AdminSendInfoStates.choosing_action)
         await message.answer("Выберите действие:", reply_markup=keyboard)
@@ -140,6 +153,26 @@ class CommunityBot:
             buttons = [[InlineKeyboardButton(text=e.name, callback_data=f"admin_confirm_selectevent_{e.id}")] for e in events]
             await state.set_state(AdminSendInfoStates.choosing_event_for_confirmation)
             await callback.message.edit_text("Выберите событие для подтверждения участия:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        elif data == "admin_send_survey_all":
+            surveys = self.db.get_all_surveys()
+            if not surveys:
+                await callback.message.edit_text("Нет доступных опросов.")
+                await state.clear()
+                await callback.answer()
+                return
+            buttons = [[InlineKeyboardButton(text=s.name, callback_data=f"admin_survey_all_{s.slug}")] for s in surveys]
+            await state.set_state(AdminSendSurveyStates.choosing_survey)
+            await callback.message.edit_text("Выберите опрос для отправки всем пользователям:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        elif data == "admin_send_survey_by_event":
+            events = self.db.get_active_events()
+            if not events:
+                await callback.message.edit_text("Нет активных мероприятий.")
+                await state.clear()
+                await callback.answer()
+                return
+            buttons = [[InlineKeyboardButton(text=e.name, callback_data=f"admin_survey_event_{e.id}")] for e in events]
+            await state.set_state(AdminSendSurveyStates.choosing_event)
+            await callback.message.edit_text("Выберите событие для отправки опроса:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
         await callback.answer()
 
     async def handle_broadcast_all_text(self, message: Message, state: FSMContext):
@@ -626,33 +659,205 @@ class CommunityBot:
     
     async def handle_survey_callback(self, callback: CallbackQuery, state: FSMContext):
         """Обработчик выбора опроса"""
-        survey_slug = callback.data.split('_')[1]
+        logger.info(f"handle_survey_callback вызван с data: {callback.data}")
+        
+        try:
+            survey_slug = callback.data.split('_')[1]
+            logger.info(f"Извлечен survey_slug: {survey_slug}")
+        except IndexError:
+            logger.error(f"Не удалось извлечь survey_slug из callback.data: {callback.data}")
+            await callback.answer("Ошибка: некорректные данные.")
+            return
+        
         survey = self.db.get_survey_by_slug(survey_slug)
+        logger.info(f"Найден опрос: {survey}")
         
         if not survey:
+            logger.error(f"Опрос с slug '{survey_slug}' не найден в базе данных")
             await callback.answer("Опрос не найден.")
             return
         
         # Очищаем предыдущее состояние FSM (важно для изоляции welcome FSM)
         await state.clear()
+        logger.info(f"Состояние FSM очищено")
         
         # Запускаем опрос
         try:
+            logger.info(f"Пытаемся создать генератор для файла: {survey.scenario_file}")
             generator = self.get_survey_generator(survey.scenario_file)
+            logger.info(f"Генератор создан успешно")
             
             # Запускаем первый шаг опроса
             first_step = generator.steps[0]
+            logger.info(f"Первый шаг опроса: {first_step}")
+            
             keyboard = generator._build_keyboard(first_step.get('keyboard'))
+            logger.info(f"Клавиатура создана: {keyboard}")
+            
             await callback.message.edit_text(first_step['message'], reply_markup=keyboard)
+            logger.info(f"Сообщение отправлено")
+            
             await state.set_state(getattr(generator.states_group, 'step_0'))
+            logger.info(f"Состояние установлено: step_0")
             
             # Сохраняем информацию об опросе в контексте
             await state.update_data(survey_slug=survey_slug, survey_name=survey.name)
+            logger.info(f"Данные опроса сохранены в контексте")
             
         except Exception as e:
-            logger.error(f"Ошибка запуска опроса: {e}")
+            logger.error(f"Ошибка запуска опроса: {e}", exc_info=True)
             await callback.message.edit_text("Ошибка при запуске опроса.")
         
+        await callback.answer()
+
+
+
+    async def handle_survey_all_selection(self, callback: CallbackQuery, state: FSMContext):
+        """Обработчик выбора опроса для отправки всем пользователям"""
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await callback.answer("Нет прав", show_alert=True)
+            return
+        
+        try:
+            survey_slug = callback.data.split('_', 3)[3]
+        except IndexError:
+            await callback.answer("Некорректный выбор опроса.")
+            return
+        
+        survey = self.db.get_survey_by_slug(survey_slug)
+        if not survey:
+            await callback.answer("Опрос не найден.")
+            return
+        
+        # Получаем всех пользователей с включенными уведомлениями
+        recipients = self.db.get_all_notifiable_users()
+        if not recipients:
+            await callback.message.edit_text("Нет пользователей с включенными уведомлениями.")
+            await state.clear()
+            await callback.answer()
+            return
+        
+        # Отправляем опрос всем пользователям
+        message_text = f"📊 Новый опрос: {survey.name}\n\nПожалуйста, пройдите опрос для улучшения нашего сообщества."
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пройти опрос", callback_data=f"survey_{survey_slug}")]
+        ])
+        
+        sent, failed = 0, 0
+        for recipient in recipients:
+            try:
+                chat_id = self._to_chat_id(recipient.telegram_id)
+                await callback.bot.send_message(chat_id, message_text, reply_markup=keyboard)
+                sent += 1
+            except Exception as e:
+                failed += 1
+                logger.error(f"Ошибка отправки опроса пользователю {recipient.telegram_id}: {e}")
+                err_text = str(e).lower()
+                if 'chat not found' in err_text or 'blocked' in err_text or 'user is deactivated' in err_text:
+                    try:
+                        self.db.update_user_fields(recipient.telegram_id, is_blocked=True, is_allow_notify=False)
+                    except Exception as _:
+                        pass
+        
+        await callback.message.edit_text(f"Опрос '{survey.name}' отправлен всем пользователям.\nУспешно: {sent}, ошибок: {failed}.")
+        await state.clear()
+        await callback.answer()
+
+    async def handle_survey_event_selection(self, callback: CallbackQuery, state: FSMContext):
+        """Обработчик выбора события для отправки опроса"""
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await callback.answer("Нет прав", show_alert=True)
+            return
+        
+        try:
+            event_id = int(callback.data.split('_', 3)[3])
+        except (IndexError, ValueError):
+            await callback.answer("Некорректный выбор события.")
+            return
+        
+        event = self.db.get_event_by_id(event_id)
+        if not event:
+            await callback.answer("Событие не найдено.")
+            return
+        
+        # Сохраняем выбранное событие и показываем список опросов
+        await state.update_data(selected_event_id=event_id, selected_event_name=event.name)
+        
+        surveys = self.db.get_all_surveys()
+        if not surveys:
+            await callback.message.edit_text("Нет доступных опросов.")
+            await state.clear()
+            await callback.answer()
+            return
+        
+        buttons = [[InlineKeyboardButton(text=s.name, callback_data=f"admin_survey_event_survey_{s.slug}")] for s in surveys]
+        await state.set_state(AdminSendSurveyStates.choosing_survey_for_event)
+        await callback.message.edit_text(f"Событие: {event.name}\n\nВыберите опрос для отправки участникам:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await callback.answer()
+
+    async def handle_survey_event_survey_selection(self, callback: CallbackQuery, state: FSMContext):
+        """Обработчик выбора опроса для конкретного события"""
+        telegram_id = str(callback.from_user.id)
+        user = self.db.get_user_by_telegram_id(telegram_id)
+        if not user or not user.is_superuser:
+            await callback.answer("Нет прав", show_alert=True)
+            return
+        
+        try:
+            survey_slug = callback.data.split('_', 4)[4]
+        except IndexError:
+            await callback.answer("Некорректный выбор опроса.")
+            return
+        
+        survey = self.db.get_survey_by_slug(survey_slug)
+        if not survey:
+            await callback.answer("Опрос не найден.")
+            return
+        
+        data = await state.get_data()
+        event_id = data.get('selected_event_id')
+        event_name = data.get('selected_event_name')
+        
+        if not event_id:
+            await callback.answer("Событие не выбрано.")
+            return
+        
+        # Получаем пользователей, зарегистрированных на событие с включенными уведомлениями
+        recipients = self.db.get_event_notifiable_users(event_id)
+        if not recipients:
+            await callback.message.edit_text("Нет участников события с включенными уведомлениями.")
+            await state.clear()
+            await callback.answer()
+            return
+        
+        # Отправляем опрос участникам события
+        message_text = f"📊 Опрос для участников события '{event_name}': {survey.name}\n\nПожалуйста, пройдите опрос для улучшения нашего сообщества."
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пройти опрос", callback_data=f"survey_{survey_slug}")]
+        ])
+        
+        sent, failed = 0, 0
+        for recipient in recipients:
+            try:
+                chat_id = self._to_chat_id(recipient.telegram_id)
+                await callback.bot.send_message(chat_id, message_text, reply_markup=keyboard)
+                sent += 1
+            except Exception as e:
+                failed += 1
+                logger.error(f"Ошибка отправки опроса пользователю {recipient.telegram_id}: {e}")
+                err_text = str(e).lower()
+                if 'chat not found' in err_text or 'blocked' in err_text or 'user is deactivated' in err_text:
+                    try:
+                        self.db.update_user_fields(recipient.telegram_id, is_blocked=True, is_allow_notify=False)
+                    except Exception as _:
+                        pass
+        
+        await callback.message.edit_text(f"Опрос '{survey.name}' отправлен участникам события '{event_name}'.\nУспешно: {sent}, ошибок: {failed}.")
+        await state.clear()
         await callback.answer()
     
     async def handle_show_capabilities(self, callback: CallbackQuery):
@@ -678,15 +883,17 @@ class CommunityBot:
     
     def _register_survey_handlers(self, router: Router):
         """Регистрация обработчиков для опросов"""
-        # Регистрируем обработчики для всех известных опросов
-        known_surveys = ['survey_topic_meeting.yaml']
+        # Получаем список активных опросов из базы данных
+        surveys = self.db.get_all_surveys()
         
-        for survey_file in known_surveys:
-            try:
-                generator = self.get_survey_generator(survey_file)
-                generator.register_handlers(router)
-            except Exception as e:
-                logger.error(f"Ошибка регистрации обработчиков для {survey_file}: {e}")
+        for survey in surveys:
+            if survey.is_enabled:
+                try:
+                    generator = self.get_survey_generator(survey.scenario_file)
+                    generator.register_handlers(router)
+                    logger.info(f"Зарегистрированы обработчики для опроса: {survey.name} ({survey.scenario_file})")
+                except Exception as e:
+                    logger.error(f"Ошибка регистрации обработчиков для {survey.scenario_file}: {e}")
     
     def register_handlers(self, router: Router):
         """Регистрация всех обработчиков"""
@@ -709,6 +916,8 @@ class CommunityBot:
         router.message.register(bot_instance.handle_broadcast_all_text, StateFilter(AdminSendInfoStates.waiting_broadcast_text))
         router.message.register(bot_instance.handle_event_message_text, StateFilter(AdminSendInfoStates.waiting_event_message_text))
         
+
+        
         # Callback обработчики (порядок важен!)
         # Админские callback'и (строгие совпадения для корневых действий)
         router.callback_query.register(
@@ -725,9 +934,16 @@ class CommunityBot:
         router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_sendinfo_all")
         router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_sendinfo_by_event")
         router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_sendinfo_confirm")
+        router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_send_survey_all")
+        router.callback_query.register(bot_instance.handle_sendinfo_action, F.data == "admin_send_survey_by_event")
         router.callback_query.register(bot_instance.handle_select_event_for_confirmation, F.data.startswith("admin_confirm_selectevent_"))
         router.callback_query.register(bot_instance.handle_user_confirm_participation, F.data.startswith("admin_confirm_yes_"))
         router.callback_query.register(bot_instance.handle_user_cancel_participation, F.data.startswith("admin_confirm_no_"))
+        
+        # Обработчики для отправки опросов
+        router.callback_query.register(bot_instance.handle_survey_all_selection, StateFilter(AdminSendSurveyStates.choosing_survey), F.data.startswith("admin_survey_all_"))
+        router.callback_query.register(bot_instance.handle_survey_event_selection, StateFilter(AdminSendSurveyStates.choosing_event), F.data.startswith("admin_survey_event_") & ~F.data.startswith("admin_survey_event_survey_"))
+        router.callback_query.register(bot_instance.handle_survey_event_survey_selection, StateFilter(AdminSendSurveyStates.choosing_survey_for_event), F.data.startswith("admin_survey_event_survey_"))
 
         router.callback_query.register(bot_instance.handle_registration, F.data.startswith("register_"))
         router.callback_query.register(bot_instance.handle_event_action, F.data.startswith("event_action_"))

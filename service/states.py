@@ -26,3 +26,10 @@ survey_keys = namedtuple(
     _survey_fields
 )
 SURVEY_KEYS = survey_keys(*_survey_fields)
+
+# Состояния для админского меню отправки опросов
+class AdminSendSurveyStates:
+    choosing_action = "choosing_action"
+    choosing_survey = "choosing_survey"
+    choosing_event = "choosing_event"
+    choosing_survey_for_event = "choosing_survey_for_event"

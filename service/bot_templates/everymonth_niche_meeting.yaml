@@ -1,0 +1,65 @@
+name: "everymonth_niche_meeting"
+steps:
+  - name: "start"
+    message: "Добро пожаловать в опрос по ежемесячной нишевой встрече!\n\nНасколько полезно посещение встречи, оцените от 1 до 10:"
+    save_to_context: "usefulness_rating"
+    next_state: "ask_usefulness_improvements"
+    keyboard: null
+    last_step: false
+
+  - name: "ask_usefulness_improvements"
+    message: "Что можно улучшить чтобы было полезней?"
+    save_to_context: "usefulness_improvements"
+    next_state: "ask_registration_convenience"
+    keyboard: null
+    last_step: false
+
+  - name: "ask_registration_convenience"
+    message: "Удобство регистрации и информирование о событии от 1 до 10:"
+    save_to_context: "registration_convenience"
+    next_state: "ask_convenience_improvements"
+    keyboard: null
+    last_step: false
+
+  - name: "ask_convenience_improvements"
+    message: "Что можно улучшить для удобства?"
+    save_to_context: "convenience_improvements"
+    next_state: "ask_meeting_expectations"
+    keyboard: null
+    last_step: false
+
+  - name: "ask_meeting_expectations"
+    message: "Какие ожидания были от встречи?"
+    save_to_context: "meeting_expectations"
+    next_state: "ask_pains_and_requests"
+    keyboard: null
+    last_step: false
+
+  - name: "ask_pains_and_requests"
+    message: "Какие есть боли и запросы?"
+    save_to_context: "pains_and_requests"
+    next_state: "ask_interesting_topics"
+    keyboard: null
+    last_step: false
+
+  - name: "ask_interesting_topics"
+    message: "Какие темы интересны?"
+    save_to_context: "interesting_topics"
+    next_state: "finish"
+    keyboard: null
+    last_step: false
+
+  - name: "finish"
+    message: "Спасибо за ваши ответы! Ваше мнение поможет нам улучшить качество наших встреч.\nОпрос завершён."
+    keyboard: null
+    last_step: true
+
+  - name: "help"
+    message: "Этот опрос поможет нам улучшить качество ежемесячных нишевых встреч. Отвечайте честно на все вопросы."
+    keyboard:
+      type: "reply"
+      buttons:
+        - text: "Назад"
+          action: "start"
+          button_type: "text"
+    last_step: false

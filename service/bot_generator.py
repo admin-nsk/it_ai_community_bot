@@ -21,8 +21,9 @@ class BotLogicGenerator:
         self.steps = self.parser.get_steps()
         self.state_map = {step['name']: idx for idx, step in enumerate(self.steps)}
         self.csv_path = None
-        self.fieldnames = [step.get('save_to_context') for step in self.steps if 'save_to_context' in step]
-        self.fieldnames = list(dict.fromkeys(self.fieldnames))
+        # Собираем все поля save_to_context кроме None
+        self.fieldnames = [step.get('save_to_context') for step in self.steps if step.get('save_to_context')]
+        self.fieldnames = list(dict.fromkeys(self.fieldnames))  # Убираем дубликаты
         if 'user_id' not in self.fieldnames:
             self.fieldnames.insert(0, 'user_id')
         self._set_csv_path()
@@ -39,10 +40,13 @@ class BotLogicGenerator:
     def _create_states_group(self):
         """Создает класс состояний для FSM"""
         states_dict = {}
+        survey_name = self.parser.get_name()
         for idx, step in enumerate(self.steps):
             states_dict[f'step_{idx}'] = State()
         
-        return type('BotStates', (StatesGroup,), states_dict)
+        # Создаем уникальное имя класса состояний для каждого опроса
+        class_name = f'{survey_name.replace("-", "_").replace(".", "_")}_States'
+        return type(class_name, (StatesGroup,), states_dict)
 
     def _build_keyboard(self, keyboard_cfg):
         if not keyboard_cfg:
@@ -58,13 +62,20 @@ class BotLogicGenerator:
         return None
 
     def _save_user_data(self, user_data: dict):
+        logger.info(f"Сохранение данных опроса {self.parser.get_name()}: {user_data}")
+        logger.info(f"CSV путь: {self.csv_path}")
+        logger.info(f"Fieldnames: {self.fieldnames}")
+        
         file_exists = os.path.isfile(self.csv_path)
         with open(self.csv_path, 'a', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=self.fieldnames)
             if not file_exists:
                 writer.writeheader()
             row = {k: user_data.get(k, '') for k in self.fieldnames}
+            logger.info(f"Сохраняемая строка: {row}")
             writer.writerow(row)
+        
+        logger.info(f"Данные успешно сохранены в {self.csv_path}")
 
         # Загружаем на Яндекс.Диск
         try:
@@ -109,12 +120,12 @@ class BotLogicGenerator:
         # Определяем следующее состояние
         next_state_name, next_step = self._get_next_state(step)
         if next_step and next_step.get('last_step'):
-            if 'save_to_context' in next_step:
-                await state.update_data(**{next_step['save_to_context']: message.text})
-                user_data = await state.get_data()
-                self._save_user_data(user_data)
-                await message.answer("Спасибо за ваши ответы!")
-                await state.clear()
+            # Если следующий шаг - финальный, сохраняем данные и завершаем
+            user_data = await state.get_data()
+            self._save_user_data(user_data)
+            await message.answer(next_step['message'])
+            await state.clear()
+            return
         
         if next_step is not None:
             keyboard = self._build_keyboard(next_step.get('keyboard'))
@@ -150,18 +161,12 @@ class BotLogicGenerator:
         next_state_name, next_step = self._get_next_state(step, callback_data)
 
         if next_step and next_step.get('last_step'):
-            if 'save_to_context' in next_step:
-                value = callback_data
-                keyboard_cfg = next_step.get('keyboard', {})
-                if keyboard_cfg and keyboard_cfg.get('type') == 'inline':
-                    for btn in keyboard_cfg.get('buttons', []):
-                        if btn.get('action') == callback_data:
-                            value = btn.get('text', callback_data)
-                            break
-                await state.update_data(**{next_step['save_to_context']: value})
+            # Если следующий шаг - финальный, сохраняем данные и завершаем
             user_data = await state.get_data()
             self._save_user_data(user_data)
+            await callback.message.answer(next_step['message'])
             await state.clear()
+            return
 
         if next_step is not None:
             keyboard = self._build_keyboard(next_step.get('keyboard'))

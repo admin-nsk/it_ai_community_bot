@@ -437,6 +437,29 @@ class Database:
                 ))
             return surveys
     
+    def get_all_surveys(self) -> List[Survey]:
+        """Получение всех опросов (включая неактивные)"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, slug, name, scenario_file, created_at, updated_at,
+                       start_date, end_date, is_enabled
+                FROM surveys 
+                ORDER BY created_at
+            ''')
+            
+            surveys = []
+            for row in cursor.fetchall():
+                surveys.append(Survey(
+                    id=row[0], slug=row[1], name=row[2], scenario_file=row[3],
+                    created_at=datetime.fromisoformat(row[4]),
+                    updated_at=datetime.fromisoformat(row[5]) if row[5] else None,
+                    start_date=datetime.fromisoformat(row[6]) if row[6] else None,
+                    end_date=datetime.fromisoformat(row[7]) if row[7] else None,
+                    is_enabled=bool(row[8])
+                ))
+            return surveys
+    
     def get_survey_by_slug(self, slug: str) -> Optional[Survey]:
         """Получение опроса по slug"""
         with sqlite3.connect(self.db_path) as conn:
@@ -513,6 +536,29 @@ class Database:
                 FROM users u
                 JOIN event_registration er ON er.user_id = u.id
                 WHERE er.event_id = ?
+            ''', (event_id,))
+            users: List[User] = []
+            for row in cursor.fetchall():
+                users.append(User(
+                    id=row[0], telegram_id=row[1], username=row[2], name=row[3],
+                    phone=row[4], email=row[5], description=row[6],
+                    created_at=datetime.fromisoformat(row[7]),
+                    updated_at=datetime.fromisoformat(row[8]) if row[8] else None,
+                    is_superuser=bool(row[9]), is_allow_notify=bool(row[10]),
+                    is_active=bool(row[11]), is_blocked=bool(row[12])
+                ))
+            return users
+    
+    def get_event_notifiable_users(self, event_id: int) -> List[User]:
+        """Пользователи, зарегистрированные на событие с включенными уведомлениями."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT u.id, u.telegram_id, u.username, u.name, u.phone, u.email, u.description,
+                       u.created_at, u.updated_at, u.is_superuser, u.is_allow_notify, u.is_active, u.is_blocked
+                FROM users u
+                JOIN event_registration er ON er.user_id = u.id
+                WHERE er.event_id = ? AND u.is_allow_notify = TRUE AND u.is_active = TRUE AND u.is_blocked = FALSE
             ''', (event_id,))
             users: List[User] = []
             for row in cursor.fetchall():
